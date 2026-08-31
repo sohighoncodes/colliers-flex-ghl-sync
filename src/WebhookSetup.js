@@ -1,0 +1,112 @@
+const FLEX_WEBHOOK_EVENTS = Object.freeze([
+  'customers.created',
+  'customers.updated',
+  'customers.subscribed',
+  'customers.unsubscribed',
+  'orders.placed',
+  'orders.updated',
+  'orders.approved',
+  'orders.invoiced',
+  'orders.cancelled',
+  'orders.deleted'
+]);
+
+function prepareWebhookReceiver_() {
+  const props = PropertiesService.getScriptProperties();
+  let secret = String(props.getProperty('WEBHOOK_INTERNAL_SECRET') || '');
+  if (!secret) {
+    secret = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+    props.setProperty('WEBHOOK_INTERNAL_SECRET', secret);
+  }
+
+  const serviceUrl = ScriptApp.getService().getUrl() || '';
+  return {
+    serviceUrl: serviceUrl,
+    internalSecret: secret,
+    appsScriptWebhookUrl: serviceUrl ? serviceUrl + '?token=' + encodeURIComponent(secret) : '',
+    deployed: !!serviceUrl
+  };
+}
+
+function showWebhookSetup_() {
+  const setup = prepareWebhookReceiver_();
+  let message = '';
+  if (!setup.deployed) {
+    message += 'Apps Script is not deployed as a Web App yet.\n\n';
+    message += 'Deploy → New deployment → Web app\n';
+    message += 'Execute as: Me\n';
+    message += 'Who has access: Anyone\n\n';
+    message += 'Then run this menu item again.\n\n';
+  } else {
+    message += 'Apps Script webhook receiver URL:\n' + setup.appsScriptWebhookUrl + '\n\n';
+  }
+  message += 'Internal forwarding secret:\n' + setup.internalSecret + '\n\n';
+  message += 'Configure the Cloudflare Worker environment variable APPS_SCRIPT_WEBHOOK_URL with the full receiver URL above.';
+  SpreadsheetApp.getUi().alert('Flex Webhook Setup', message, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+function registerFlexWebhook_() {
+  const config = getConfig_();
+  const targetUrl = String(config.FLEX_WEBHOOK_TARGET_URL || '').trim();
+  if (!targetUrl) {
+    throw new Error('Add FLEX_WEBHOOK_TARGET_URL to the Config tab with your deployed Cloudflare Worker URL first.');
+  }
+
+  const existingResponse = flexRequest_('/api/v1/webhooks');
+  const existing = getCollectionItems_(existingResponse.body);
+  const matching = existing.filter(function(webhook) {
+    return String(webhook.target_url || '').trim() === targetUrl;
+  });
+
+  if (matching.length) {
+    const current = matching[0];
+    SpreadsheetApp.getUi().alert(
+      'Flex webhook already exists.\n\n' +
+      'UUID: ' + (current.uuid || '') + '\n' +
+      'Target: ' + targetUrl + '\n' +
+      'Events: ' + ((current.events || []).join(', ')) + '\n\n' +
+      'Secret key: ' + (current.secret_key || '[retrieve webhook details if hidden]')
+    );
+    return current;
+  }
+
+  const response = flexRequest_('/api/v1/webhooks', {
+    method: 'post',
+    payload: {
+      target_url: targetUrl,
+      events: FLEX_WEBHOOK_EVENTS.slice()
+    }
+  });
+  const webhook = response.body || {};
+
+  setSyncState_(
+    'webhook',
+    'flex_subscription_uuid',
+    webhook.uuid || '',
+    new Date(),
+    'Flex webhook subscription registered for customer/order sync events.'
+  );
+
+  SpreadsheetApp.getUi().alert(
+    'Flex webhook registered.\n\n' +
+    'UUID: ' + (webhook.uuid || '') + '\n' +
+    'Target: ' + targetUrl + '\n\n' +
+    'IMPORTANT — copy this Flex secret into the Cloudflare Worker secret FLEX_WEBHOOK_SECRET:\n\n' +
+    (webhook.secret_key || '[secret key not returned]')
+  );
+  return webhook;
+}
+
+function inspectFlexWebhooks_() {
+  const response = flexRequest_('/api/v1/webhooks');
+  const webhooks = getCollectionItems_(response.body);
+  const summary = webhooks.map(function(item) {
+    return {
+      uuid: item.uuid || '',
+      target_url: item.target_url || '',
+      events: item.events || []
+    };
+  });
+  SpreadsheetApp.getUi().alert('Flex webhooks', JSON.stringify(summary, null, 2), SpreadsheetApp.getUi().ButtonSet.OK);
+  return summary;
+}
