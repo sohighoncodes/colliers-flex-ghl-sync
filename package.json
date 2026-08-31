@@ -1,0 +1,17 @@
+{
+  "name": "colliers-flex-ghl-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Flex API to GoHighLevel sync running in Google Apps Script",
+  "scripts": {
+    "clasp:login": "clasp login",
+    "clasp:pull": "clasp pull",
+    "clasp:push": "clasp push",
+    "clasp:status": "clasp status",
+    "clasp:open": "clasp open",
+    "clasp:deployments": "clasp deployments"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.1.0"
+  }
+}
