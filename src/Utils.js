@@ -34,6 +34,26 @@ function redactSensitive_(value) {
   return output;
 }
 
+function describeShape_(value, depth) {
+  const currentDepth = depth || 0;
+  if (currentDepth >= 6) return '[max-depth]';
+  if (value === null) return 'null';
+  if (Array.isArray(value)) {
+    return {
+      type: 'array',
+      length: value.length,
+      item: value.length ? describeShape_(value[0], currentDepth + 1) : 'empty'
+    };
+  }
+  if (typeof value !== 'object') return typeof value;
+
+  const shape = {};
+  Object.keys(value).sort().forEach(function(key) {
+    shape[key] = describeShape_(value[key], currentDepth + 1);
+  });
+  return shape;
+}
+
 function truncate_(value, maxLength) {
   const text = value === null || value === undefined ? '' : String(value);
   return text.length > maxLength ? text.substring(0, maxLength) + '…' : text;
