@@ -19,7 +19,13 @@ function executeSync_(triggerName) {
       return;
     }
 
-    throw new Error('Live entity processing is intentionally not enabled until connection tests and field mappings pass.');
+    const summary = runReconciliationBatch_(run, config);
+    const status = summary.failures > 0 ? 'PARTIAL' : 'SUCCESS';
+    finishRun_(run, status,
+      'Reconciliation completed. Changed customers: ' + summary.changedCustomers +
+      '; changed orders: ' + summary.changedOrders +
+      '; unique customers processed: ' + summary.uniqueCustomers +
+      '; failures: ' + summary.failures + '.');
   } catch (error) {
     if (run) {
       logCaughtError_(run, 'EXECUTE_SYNC', error, {entityType: 'system'});
