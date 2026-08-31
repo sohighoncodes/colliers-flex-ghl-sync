@@ -7,6 +7,7 @@ function onOpen() {
     .addItem('Inspect GHL field mappings', 'inspectGhlFieldMappings')
     .addSeparator()
     .addItem('Test latest Flex customer → GHL', 'testLatestFlexCustomerSync')
+    .addItem('Test Flex customer 2874 → known GHL contact', 'testFlexCustomer2874Sync')
     .addSeparator()
     .addItem('Run sync now', 'runSyncNow')
     .addItem('Install 5-minute trigger', 'installSyncTrigger')
@@ -39,6 +40,19 @@ function testLatestFlexCustomerSync() {
   SpreadsheetApp.getUi().alert(
     'Controlled sync test completed.\n\nFlex Customer UUID: ' + result.flexCustomerUuid +
     '\nGHL Contact ID: ' + result.ghlContactId +
+    '\nOrder Count: ' + result.metrics.orderCount +
+    '\nLifetime Value: ' + result.metrics.lifetimeValue
+  );
+}
+
+function testFlexCustomer2874Sync() {
+  const result = runTargetedCustomer2874SyncTest_();
+  SpreadsheetApp.getUi().alert(
+    'Targeted customer test completed.\n\nFlex Customer ID: ' + result.flexCustomerId +
+    '\nFlex Customer UUID: ' + result.flexCustomerUuid +
+    '\nGHL Contact ID: ' + result.ghlContactId +
+    '\nCompany UUID: ' + (result.companyUuid || '[none]') +
+    '\nCompany UUID Source: ' + result.companyUuidSource +
     '\nOrder Count: ' + result.metrics.orderCount +
     '\nLifetime Value: ' + result.metrics.lifetimeValue
   );
