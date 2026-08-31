@@ -1,3 +1,53 @@
+function doGet(e) {
+  const props = PropertiesService.getScriptProperties();
+  const expectedToken = String(props.getProperty('WEBHOOK_INTERNAL_SECRET') || '').trim();
+  const suppliedToken = e && e.parameter ? String(e.parameter.token || '').trim() : '';
+  if (!expectedToken || !suppliedToken || !constantTimeEquals_(expectedToken, suppliedToken)) {
+    return jsonOutput_({ok: false, error: 'unauthorized'});
+  }
+
+  const mode = e && e.parameter ? String(e.parameter.mode || 'health') : 'health';
+  const flexKey = String(props.getProperty(SYNC_CONSTANTS.propertyKeys.flexApiKey) || '').trim();
+  const ghlToken = String(props.getProperty(SYNC_CONSTANTS.propertyKeys.ghlToken) || '').trim();
+
+  if (mode === 'health') {
+    return jsonOutput_({
+      ok: true,
+      mode: 'health',
+      hasFlexKey: !!flexKey,
+      flexKeyLength: flexKey.length,
+      hasGhlToken: !!ghlToken,
+      ghlTokenLength: ghlToken.length,
+      hasInternalSecret: !!expectedToken
+    });
+  }
+
+  if (mode === 'flex-test') {
+    const customerUuid = e && e.parameter ? String(e.parameter.customerUuid || '').trim() : '';
+    if (!customerUuid) return jsonOutput_({ok: false, error: 'missing_customerUuid'});
+
+    try {
+      const result = flexRequest_('/api/v1/customers/' + encodeURIComponent(customerUuid), {method: 'get', maxAttempts: 1});
+      return jsonOutput_({
+        ok: true,
+        mode: 'flex-test',
+        httpStatus: result.status,
+        customerUuid: customerUuid
+      });
+    } catch (error) {
+      return jsonOutput_({
+        ok: false,
+        mode: 'flex-test',
+        customerUuid: customerUuid,
+        httpStatus: error && error.httpStatus ? error.httpStatus : (error && error.status ? error.status : null),
+        message: error && error.message ? error.message : String(error)
+      });
+    }
+  }
+
+  return jsonOutput_({ok: false, error: 'unsupported_mode'});
+}
+
 function doPost(e) {
   const response = {ok: false};
   try {
