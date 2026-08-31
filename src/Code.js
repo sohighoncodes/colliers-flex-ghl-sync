@@ -8,6 +8,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Test latest Flex customer → GHL', 'testLatestFlexCustomerSync')
     .addItem('Test Flex customer 2874 → known GHL contact', 'testFlexCustomer2874Sync')
+    .addItem('Test linked Flex company → existing GHL company', 'testKnownFlexCompanySync')
     .addSeparator()
     .addItem('Run sync now', 'runSyncNow')
     .addItem('Install 5-minute trigger', 'installSyncTrigger')
@@ -55,6 +56,18 @@ function testFlexCustomer2874Sync() {
     '\nCompany UUID Source: ' + result.companyUuidSource +
     '\nOrder Count: ' + result.metrics.orderCount +
     '\nLifetime Value: ' + result.metrics.lifetimeValue
+  );
+}
+
+function testKnownFlexCompanySync() {
+  const result = runKnownFlexCompanySyncTest_();
+  SpreadsheetApp.getUi().alert(
+    'Targeted company test completed.\n\nFlex Company UUID: ' + result.flexCompanyUuid +
+    '\nGHL Business ID: ' + result.ghlBusinessId +
+    '\nCompany Order Count: ' + result.metrics.orderCount +
+    '\nCompany Lifetime Value: ' + result.metrics.lifetimeValue +
+    '\nFirst Order Date: ' + result.metrics.firstOrderDate +
+    '\nLast Order Date: ' + result.metrics.lastOrderDate
   );
 }
 
