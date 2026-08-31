@@ -11,8 +11,12 @@ function onOpen() {
     .addItem('Test linked Flex company → existing GHL company', 'testKnownFlexCompanySync')
     .addSeparator()
     .addItem('Run sync now', 'runSyncNow')
-    .addItem('Install 5-minute trigger', 'installSyncTrigger')
+    .addItem('Install 5-minute reconciliation trigger', 'installSyncTrigger')
     .addItem('Remove sync triggers', 'removeSyncTriggers')
+    .addSeparator()
+    .addItem('Show webhook receiver setup', 'showWebhookSetup')
+    .addItem('Inspect Flex webhooks', 'inspectFlexWebhooks')
+    .addItem('Register Flex webhook', 'registerFlexWebhook')
     .addToUi();
 }
 
@@ -34,6 +38,18 @@ function inspectFlexOrderSchema() {
 
 function inspectGhlFieldMappings() {
   runGhlFieldMappingInspection_();
+}
+
+function showWebhookSetup() {
+  return showWebhookSetup_();
+}
+
+function inspectFlexWebhooks() {
+  return inspectFlexWebhooks_();
+}
+
+function registerFlexWebhook() {
+  return registerFlexWebhook_();
 }
 
 function testLatestFlexCustomerSync() {
@@ -101,7 +117,7 @@ function installSyncTrigger() {
     .timeBased()
     .everyMinutes(5)
     .create();
-  SpreadsheetApp.getUi().alert('The 5-minute sync trigger is installed. SYNC_ENABLED remains controlled by the Config tab.');
+  SpreadsheetApp.getUi().alert('The 5-minute reconciliation trigger is installed. Webhooks remain the primary near-real-time path; this trigger is the recovery safety net.');
 }
 
 function removeSyncTriggers() {
