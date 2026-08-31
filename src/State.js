@@ -41,6 +41,31 @@ function findEntityMap_(entityType, flexUuid, flexId) {
       return {rowNumber: i + 2, values: rows[i]};
     }
   }
+
+  if (String(entityType) === 'customer' && (flexUuid || flexId)) {
+    const resolved = findGhlContactByFlexIdentifiers_(flexUuid, flexId);
+    if (resolved && resolved.contact && resolved.contact.id) {
+      return {
+        rowNumber: null,
+        values: [
+          'customer',
+          flexUuid || '',
+          flexId || '',
+          '',
+          'contact',
+          resolved.contact.id,
+          '',
+          resolved.contact.businessId || '',
+          '',
+          'RESOLVED_FROM_GHL',
+          'Resolved from GHL custom field: ' + resolved.matchMethod
+        ],
+        resolvedFromGhl: true,
+        matchMethod: resolved.matchMethod
+      };
+    }
+  }
+
   return null;
 }
 
@@ -60,6 +85,6 @@ function upsertEntityMap_(entity) {
     entity.syncStatus || 'SYNCED',
     truncate_(entity.notes || '', 5000)
   ];
-  if (existing) sheet.getRange(existing.rowNumber, 1, 1, row.length).setValues([row]);
+  if (existing && existing.rowNumber) sheet.getRange(existing.rowNumber, 1, 1, row.length).setValues([row]);
   else sheet.appendRow(row);
 }
