@@ -48,7 +48,7 @@ function isSyncEnabled_(config) {
 }
 
 function getRequiredSecret_(key) {
-  const value = PropertiesService.getScriptProperties().getProperty(key);
+  const value = String(PropertiesService.getScriptProperties().getProperty(key) || '').trim();
   if (!value) throw new Error('Missing Script Property: ' + key);
   return value;
 }
