@@ -20,12 +20,14 @@ function executeSync_(triggerName) {
     }
 
     const summary = runReconciliationBatch_(run, config);
-    const status = summary.failures > 0 ? 'PARTIAL' : 'SUCCESS';
+    const status = summary.failures > 0 || summary.remaining > 0 ? 'PARTIAL' : 'SUCCESS';
     finishRun_(run, status,
       'Reconciliation completed. Changed customers: ' + summary.changedCustomers +
       '; changed orders: ' + summary.changedOrders +
-      '; unique customers processed: ' + summary.uniqueCustomers +
-      '; failures: ' + summary.failures + '.');
+      '; customers attempted: ' + summary.uniqueCustomers +
+      '; skipped: ' + summary.skipped +
+      '; failures: ' + summary.failures +
+      '; remaining queued: ' + summary.remaining + '.');
   } catch (error) {
     if (run) {
       logCaughtError_(run, 'EXECUTE_SYNC', error, {entityType: 'system'});
