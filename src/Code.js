@@ -4,6 +4,7 @@ function onOpen() {
     .addItem('Run logging self-test', 'runLoggingSelfTest')
     .addItem('Test API connections', 'testApiConnections')
     .addItem('Inspect Flex order schema', 'inspectFlexOrderSchema')
+    .addItem('Inspect GHL field mappings', 'inspectGhlFieldMappings')
     .addSeparator()
     .addItem('Run sync now', 'runSyncNow')
     .addItem('Install 5-minute trigger', 'installSyncTrigger')
@@ -25,6 +26,10 @@ function testApiConnections() {
 
 function inspectFlexOrderSchema() {
   runFlexOrderSchemaInspection_();
+}
+
+function inspectGhlFieldMappings() {
+  runGhlFieldMappingInspection_();
 }
 
 function runLoggingSelfTest() {
