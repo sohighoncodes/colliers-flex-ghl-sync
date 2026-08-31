@@ -62,3 +62,34 @@ function testGhlConnection_(run, locationId) {
   });
   return response;
 }
+
+function runFlexOrderSchemaInspection_() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) throw new Error('Another sync process is already running.');
+
+  const run = startRun_('MANUAL_FLEX_SCHEMA_INSPECTION');
+  try {
+    const startedAtMs = Date.now();
+    const response = flexRequest_('/api/v1/orders?per_page=1&sort_order=desc');
+    logEvent_(run, {
+      entityType: 'order',
+      eventType: 'SCHEMA_INSPECTION',
+      action: 'READ_FLEX_ORDER_SHAPE',
+      status: 'SUCCESS',
+      attempt: response.attempt,
+      durationMs: elapsedMs_(startedAtMs),
+      message: 'Captured the latest Flex order response structure without logging field values or customer PII.',
+      context: {
+        httpStatus: response.status,
+        responseShape: describeShape_(response.body)
+      }
+    });
+    finishRun_(run, 'SUCCESS', 'Flex order schema inspection passed.');
+  } catch (error) {
+    logCaughtError_(run, 'FLEX_ORDER_SCHEMA_INSPECTION', error, {entityType: 'order'});
+    finishRun_(run, 'FAILED', error.message || String(error));
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
