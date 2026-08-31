@@ -6,6 +6,8 @@ function onOpen() {
     .addItem('Inspect Flex order schema', 'inspectFlexOrderSchema')
     .addItem('Inspect GHL field mappings', 'inspectGhlFieldMappings')
     .addSeparator()
+    .addItem('Test latest Flex customer → GHL', 'testLatestFlexCustomerSync')
+    .addSeparator()
     .addItem('Run sync now', 'runSyncNow')
     .addItem('Install 5-minute trigger', 'installSyncTrigger')
     .addItem('Remove sync triggers', 'removeSyncTriggers')
@@ -30,6 +32,16 @@ function inspectFlexOrderSchema() {
 
 function inspectGhlFieldMappings() {
   runGhlFieldMappingInspection_();
+}
+
+function testLatestFlexCustomerSync() {
+  const result = runLatestFlexCustomerSyncTest_();
+  SpreadsheetApp.getUi().alert(
+    'Controlled sync test completed.\n\nFlex Customer UUID: ' + result.flexCustomerUuid +
+    '\nGHL Contact ID: ' + result.ghlContactId +
+    '\nOrder Count: ' + result.metrics.orderCount +
+    '\nLifetime Value: ' + result.metrics.lifetimeValue
+  );
 }
 
 function runLoggingSelfTest() {
