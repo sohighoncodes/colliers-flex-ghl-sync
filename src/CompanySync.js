@@ -66,7 +66,7 @@ function runKnownFlexCompanySyncTest_() {
         flex_company_source: 'Flex Catering Sync',
         company_order_count: metrics.orderCount,
         company_lifetime_value: {
-          currency: 'AUD',
+          currency: 'default',
           value: metrics.lifetimeValue
         },
         company_first_order_date: metrics.firstOrderDate,
