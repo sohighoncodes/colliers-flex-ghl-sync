@@ -37,22 +37,19 @@ export default {
     });
 
     const upstreamText = await upstream.text();
-    if (!upstream.ok) {
-      return json({
-        ok: false,
-        error: 'upstream_failed',
-        upstreamStatus: upstream.status,
-        eventId,
-        eventType
-      }, 502);
-    }
-
     let upstreamBody;
     try { upstreamBody = JSON.parse(upstreamText); }
     catch { upstreamBody = {raw: upstreamText}; }
 
-    if (upstreamBody && upstreamBody.retry === true) {
-      return json({ok: false, retry: true, eventId, eventType}, 503);
+    if (!upstream.ok || !upstreamBody || upstreamBody.ok !== true) {
+      return json({
+        ok: false,
+        retry: !!(upstreamBody && upstreamBody.retry),
+        error: 'upstream_failed',
+        upstreamStatus: upstream.status,
+        eventId,
+        eventType
+      }, upstreamBody && upstreamBody.retry ? 503 : 502);
     }
 
     return json({ok: true, eventId, eventType, upstream: upstreamBody}, 200);
