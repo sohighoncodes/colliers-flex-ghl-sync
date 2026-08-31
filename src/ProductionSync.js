@@ -2,36 +2,53 @@ function runReconciliationBatch_(run, config) {
   const locationId = String(config.GHL_LOCATION_ID || '');
   if (!locationId) throw new Error('GHL_LOCATION_ID is missing from Config.');
 
-  const maxCustomers = Math.max(1, Number(config.SYNC_MAX_CUSTOMERS_PER_RUN || 50));
+  const maxCustomers = Math.max(1, Number(config.SYNC_MAX_CUSTOMERS_PER_RUN || 10));
   const maxPages = Math.max(1, Number(config.SYNC_MAX_SOURCE_PAGES || 5));
   const overlapMinutes = Math.max(0, Number(config.SYNC_CURSOR_OVERLAP_MINUTES || 2));
   const initialLookbackHours = Math.max(1, Number(config.SYNC_INITIAL_LOOKBACK_HOURS || 24));
-  const snapshotToIso = run.startedAt.toISOString();
 
-  const customerCursor = getCursorIso_('customer', 'updated_at_cursor', initialLookbackHours, overlapMinutes);
-  const orderCursor = getCursorIso_('order', 'updated_at_cursor', initialLookbackHours, overlapMinutes);
-  const customerUuids = {};
+  let pending = getPendingReconciliation_();
+  if (!pending || !pending.uuids || !pending.uuids.length) {
+    const snapshotToIso = run.startedAt.toISOString();
+    const customerCursor = getCursorIso_('customer', 'updated_at_cursor', initialLookbackHours, overlapMinutes);
+    const orderCursor = getCursorIso_('order', 'updated_at_cursor', initialLookbackHours, overlapMinutes);
+    const customerUuids = {};
 
-  const changedCustomers = listChangedFlexCustomers_(customerCursor, snapshotToIso, maxPages);
-  changedCustomers.forEach(function(customer) {
-    if (customer && customer.uuid) customerUuids[customer.uuid] = true;
-  });
+    const changedCustomers = listChangedFlexCustomers_(customerCursor, snapshotToIso, maxPages);
+    changedCustomers.forEach(function(customer) {
+      if (customer && customer.uuid) customerUuids[customer.uuid] = true;
+    });
 
-  const changedOrders = listChangedFlexOrders_(orderCursor, snapshotToIso, maxPages);
-  changedOrders.forEach(function(order) {
-    if (order && order.customer_uuid) customerUuids[order.customer_uuid] = true;
-  });
-  run.ordersChecked += changedOrders.length;
+    const changedOrders = listChangedFlexOrders_(orderCursor, snapshotToIso, maxPages);
+    changedOrders.forEach(function(order) {
+      if (order && order.customer_uuid) customerUuids[order.customer_uuid] = true;
+    });
+    run.ordersChecked += changedOrders.length;
 
-  const uuids = Object.keys(customerUuids).slice(0, maxCustomers);
+    pending = {
+      customerCursor: customerCursor,
+      orderCursor: orderCursor,
+      snapshotToIso: snapshotToIso,
+      changedCustomers: changedCustomers.length,
+      changedOrders: changedOrders.length,
+      uuids: Object.keys(customerUuids)
+    };
+  }
+
+  const batch = pending.uuids.slice(0, maxCustomers);
+  const remaining = pending.uuids.slice(maxCustomers);
+  const retry = [];
   let failures = 0;
+  let skipped = 0;
 
-  for (let i = 0; i < uuids.length; i += 1) {
-    const customerUuid = uuids[i];
+  for (let i = 0; i < batch.length; i += 1) {
+    const customerUuid = batch[i];
     try {
-      syncFlexCustomerToGhl_(run, customerUuid, locationId);
+      const result = syncFlexCustomerToGhl_(run, customerUuid, locationId);
+      if (result && result.skipped) skipped += 1;
     } catch (error) {
       failures += 1;
+      retry.push(customerUuid);
       logCaughtError_(run, 'SYNC_CUSTOMER', error, {
         entityType: 'customer',
         flexUuid: customerUuid
@@ -39,48 +56,74 @@ function runReconciliationBatch_(run, config) {
     }
   }
 
-  if (failures === 0 && uuids.length < maxCustomers) {
-    setSyncState_('customer', 'updated_at_cursor', snapshotToIso, new Date(), 'Advanced after successful reconciliation batch.');
-    setSyncState_('order', 'updated_at_cursor', snapshotToIso, new Date(), 'Advanced after successful reconciliation batch.');
-  } else if (failures > 0) {
+  const stillPending = retry.concat(remaining);
+  if (stillPending.length) {
+    pending.uuids = stillPending;
+    setPendingReconciliation_(pending);
     logEvent_(run, {
       entityType: 'system',
       eventType: 'CURSOR_HELD',
       action: 'RECONCILIATION_CURSOR',
       status: 'SKIPPED',
-      message: 'One or more customer syncs failed, so source cursors were not advanced. The next run will retry the same window.',
-      context: {failures: failures, customersAttempted: uuids.length}
+      message: failures
+        ? 'Some customer syncs failed; failed and unprocessed records were queued for the next run.'
+        : 'Batch limit reached; remaining customer records were queued for the next run.',
+      context: {
+        failures: failures,
+        skipped: skipped,
+        attempted: batch.length,
+        remaining: stillPending.length
+      }
     });
   } else {
-    logEvent_(run, {
-      entityType: 'system',
-      eventType: 'CURSOR_HELD',
-      action: 'RECONCILIATION_CURSOR',
-      status: 'SKIPPED',
-      message: 'Customer run limit was reached, so source cursors were not advanced. The next run will continue replaying the same safe window.',
-      context: {maxCustomers: maxCustomers, customersAttempted: uuids.length}
-    });
+    setSyncState_('customer', 'updated_at_cursor', pending.snapshotToIso, new Date(), 'Advanced after reconciliation window completed.');
+    setSyncState_('order', 'updated_at_cursor', pending.snapshotToIso, new Date(), 'Advanced after reconciliation window completed.');
+    clearPendingReconciliation_();
   }
 
   return {
-    changedCustomers: changedCustomers.length,
-    changedOrders: changedOrders.length,
-    uniqueCustomers: uuids.length,
+    changedCustomers: Number(pending.changedCustomers || 0),
+    changedOrders: Number(pending.changedOrders || 0),
+    uniqueCustomers: batch.length,
+    skipped: skipped,
     failures: failures,
-    customerCursor: customerCursor,
-    orderCursor: orderCursor,
-    snapshotToIso: snapshotToIso
+    remaining: stillPending.length,
+    customerCursor: pending.customerCursor,
+    orderCursor: pending.orderCursor,
+    snapshotToIso: pending.snapshotToIso
   };
+}
+
+function getPendingReconciliation_() {
+  const state = getSyncState_('system', 'reconciliation_pending');
+  if (!state || !state.value) return null;
+  try {
+    const parsed = JSON.parse(String(state.value));
+    return parsed && Array.isArray(parsed.uuids) ? parsed : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function setPendingReconciliation_(pending) {
+  setSyncState_(
+    'system',
+    'reconciliation_pending',
+    JSON.stringify(pending),
+    '',
+    'Pending production reconciliation batch.'
+  );
+}
+
+function clearPendingReconciliation_() {
+  setSyncState_('system', 'reconciliation_pending', '', new Date(), 'No pending reconciliation records.');
 }
 
 function getCursorIso_(entityType, stateKey, initialLookbackHours, overlapMinutes) {
   const state = getSyncState_(entityType, stateKey);
   let base;
-  if (state && state.value) {
-    base = new Date(state.value);
-  } else {
-    base = new Date(Date.now() - initialLookbackHours * 3600000);
-  }
+  if (state && state.value) base = new Date(state.value);
+  else base = new Date(Date.now() - initialLookbackHours * 3600000);
   if (isNaN(base.getTime())) base = new Date(Date.now() - initialLookbackHours * 3600000);
   return new Date(base.getTime() - overlapMinutes * 60000).toISOString();
 }
@@ -89,12 +132,13 @@ function listChangedFlexCustomers_(fromIso, toIso, maxPages) {
   const all = [];
   const perPage = 100;
   for (let page = 1; page <= maxPages; page += 1) {
-    const path = '/api/v1/customers?per_page=' + perPage +
+    const response = flexRequest_(
+      '/api/v1/customers?per_page=' + perPage +
       '&page=' + page +
       '&sort_order=asc&sort_field=updated_at' +
       '&updated_at_datetime_from=' + encodeURIComponent(fromIso) +
-      '&updated_at_datetime_to=' + encodeURIComponent(toIso);
-    const response = flexRequest_(path);
+      '&updated_at_datetime_to=' + encodeURIComponent(toIso)
+    );
     const items = getCollectionItems_(response.body);
     Array.prototype.push.apply(all, items);
     if (!(response.body && response.body.next_page) || items.length === 0) break;
@@ -106,12 +150,13 @@ function listChangedFlexOrders_(fromIso, toIso, maxPages) {
   const all = [];
   const perPage = 100;
   for (let page = 1; page <= maxPages; page += 1) {
-    const path = '/api/v1/orders?per_page=' + perPage +
+    const response = flexRequest_(
+      '/api/v1/orders?per_page=' + perPage +
       '&page=' + page +
       '&sort_order=asc&sort_field=created_at' +
       '&updated_at_datetime_from=' + encodeURIComponent(fromIso) +
-      '&updated_at_datetime_to=' + encodeURIComponent(toIso);
-    const response = flexRequest_(path);
+      '&updated_at_datetime_to=' + encodeURIComponent(toIso)
+    );
     const items = getCollectionItems_(response.body);
     Array.prototype.push.apply(all, items);
     if (!(response.body && response.body.next_page) || items.length === 0) break;
@@ -125,11 +170,27 @@ function syncFlexCustomerToGhl_(run, customerUuid, locationId) {
   if (!customer || !customer.uuid) throw new Error('Flex customer lookup returned no customer uuid for ' + customerUuid + '.');
   run.customersChecked += 1;
 
+  const existingMap = findEntityMap_('customer', customer.uuid, customer.id);
+  const hasMappedContact = existingMap && existingMap.values[5];
+  const hasIdentifier = customer.email || customer.mobile || customer.phone;
+  if (!hasMappedContact && !hasIdentifier) {
+    logEvent_(run, {
+      entityType: 'customer',
+      flexUuid: customer.uuid,
+      flexId: customer.id,
+      eventType: 'SYNC_SKIPPED',
+      action: 'NO_DETERMINISTIC_GHL_IDENTIFIER',
+      status: 'SKIPPED',
+      message: 'Skipped Flex customer because it has no mapped GHL contact, email, or phone.',
+      context: {reason: 'no_entity_map_email_or_phone'}
+    });
+    return {customer: customer, skipped: true, reason: 'no_identifier'};
+  }
+
   const orders = listAllFlexCustomerOrders_(customer.uuid);
   run.ordersChecked += orders.length;
   const metrics = aggregateCustomerOrders_(orders);
-
-  const contactResult = upsertProductionGhlContact_(customer, metrics, locationId);
+  const contactResult = upsertProductionGhlContact_(customer, metrics, locationId, existingMap);
   const ghlContactId = contactResult.ghlContactId;
 
   let fullLatestOrder = null;
@@ -177,43 +238,45 @@ function syncFlexCustomerToGhl_(run, customerUuid, locationId) {
     }
   });
 
-  if (companyUuid) {
-    syncFlexCompanyToGhl_(run, companyUuid, ghlContactId, locationId);
-  }
-
+  if (companyUuid) syncFlexCompanyToGhl_(run, companyUuid, ghlContactId, locationId);
   return {customer: customer, metrics: metrics, ghlContactId: ghlContactId, companyUuid: companyUuid};
 }
 
-function upsertProductionGhlContact_(customer, metrics, locationId) {
-  const payload = buildGhlContactPayload_(customer, metrics, locationId);
-  const map = findEntityMap_('customer', customer.uuid, customer.id);
-  let response;
-  let action;
+function upsertProductionGhlContact_(customer, metrics, locationId, existingMap) {
+  const payload = compactPayload_(buildGhlContactPayload_(customer, metrics, locationId));
+  const map = existingMap || findEntityMap_('customer', customer.uuid, customer.id);
 
   if (map && map.values[5]) {
     const ghlContactId = String(map.values[5]);
-    response = ghlRequest_('/contacts/' + encodeURIComponent(ghlContactId), {
+    const response = ghlRequest_('/contacts/' + encodeURIComponent(ghlContactId), {
       method: 'put',
       apiVersion: 'v3',
       payload: removeLocationId_(payload)
     });
-    action = 'UPDATE_GHL_CONTACT_BY_ENTITY_MAP';
-    return {ghlContactId: ghlContactId, response: response, action: action};
+    return {ghlContactId: ghlContactId, response: response, action: 'UPDATE_GHL_CONTACT_BY_ENTITY_MAP'};
   }
 
-  if (!customer.email && !customer.mobile && !customer.phone) {
-    throw new Error('Flex customer ' + customer.uuid + ' has no entity map, email, or phone. Refusing non-deterministic GHL contact creation.');
-  }
-
-  response = ghlRequest_('/contacts/upsert', {
+  const response = ghlRequest_('/contacts/upsert', {
     method: 'post',
     apiVersion: 'v3',
     payload: payload
   });
   const contact = response.body && response.body.contact;
   if (!contact || !contact.id) throw new Error('GHL contact upsert returned no contact.id.');
-  action = response.body && response.body.new === true ? 'CREATE_GHL_CONTACT_BY_UPSERT' : 'UPSERT_EXISTING_GHL_CONTACT';
-  return {ghlContactId: contact.id, response: response, action: action};
+  return {
+    ghlContactId: contact.id,
+    response: response,
+    action: response.body && response.body.new === true ? 'CREATE_GHL_CONTACT_BY_UPSERT' : 'UPSERT_EXISTING_GHL_CONTACT'
+  };
+}
+
+function compactPayload_(payload) {
+  const output = {};
+  Object.keys(payload || {}).forEach(function(key) {
+    const value = payload[key];
+    if (value !== '' && value !== null && value !== undefined) output[key] = value;
+  });
+  return output;
 }
 
 function syncFlexCompanyToGhl_(run, companyUuid, ghlContactId, locationId) {
@@ -231,7 +294,7 @@ function syncFlexCompanyToGhl_(run, companyUuid, ghlContactId, locationId) {
   const businessResolution = resolveGhlBusiness_(company, companyUuid, currentContact, locationId);
   const businessId = businessResolution.businessId;
 
-  const corePayload = {
+  const corePayload = compactPayload_({
     name: company.name || '',
     phone: company.phone || '',
     email: company.email || '',
@@ -242,7 +305,7 @@ function syncFlexCompanyToGhl_(run, companyUuid, ghlContactId, locationId) {
     state: company.state || '',
     country: company.country || '',
     description: 'Synced from Flex Catering. Flex Company UUID: ' + companyUuid
-  };
+  });
 
   const businessWrite = ghlRequest_('/businesses/' + encodeURIComponent(businessId), {
     method: 'put',
@@ -250,33 +313,25 @@ function syncFlexCompanyToGhl_(run, companyUuid, ghlContactId, locationId) {
     payload: corePayload
   });
 
+  const properties = {
+    flex_company_uuid: companyUuid,
+    flex_company_source: 'Flex Catering Sync',
+    company_order_count: metrics.orderCount,
+    company_lifetime_value: {currency: 'default', value: metrics.lifetimeValue}
+  };
+  if (metrics.firstOrderDate) properties.company_first_order_date = metrics.firstOrderDate;
+  if (metrics.lastOrderDate) properties.last_order_date = metrics.lastOrderDate;
+
   const objectWrite = ghlRequest_(
     '/objects/business/records/' + encodeURIComponent(businessId) + '?locationId=' + encodeURIComponent(locationId),
-    {
-      method: 'put',
-      apiVersion: 'v3',
-      payload: {
-        properties: {
-          flex_company_uuid: companyUuid,
-          flex_company_source: 'Flex Catering Sync',
-          company_order_count: metrics.orderCount,
-          company_lifetime_value: {currency: 'default', value: metrics.lifetimeValue},
-          company_first_order_date: metrics.firstOrderDate,
-          last_order_date: metrics.lastOrderDate
-        }
-      }
-    }
+    {method: 'put', apiVersion: 'v3', payload: {properties: properties}}
   );
 
   if (!currentContact || String(currentContact.businessId || '') !== String(businessId)) {
     ghlRequest_('/contacts/bulk/business', {
       method: 'post',
       apiVersion: 'v3',
-      payload: {
-        locationId: String(locationId),
-        ids: [ghlContactId],
-        businessId: businessId
-      }
+      payload: {locationId: String(locationId), ids: [ghlContactId], businessId: businessId}
     });
   }
 
@@ -321,28 +376,18 @@ function syncFlexCompanyToGhl_(run, companyUuid, ghlContactId, locationId) {
 
 function resolveGhlBusiness_(company, companyUuid, contact, locationId) {
   const map = findEntityMap_('company', companyUuid, company.id);
-  if (map && map.values[5]) {
-    return {businessId: String(map.values[5]), method: 'entity_map', created: false};
-  }
-
-  if (contact && contact.businessId) {
-    return {businessId: String(contact.businessId), method: 'contact_business_id', created: false};
-  }
+  if (map && map.values[5]) return {businessId: String(map.values[5]), method: 'entity_map', created: false};
+  if (contact && contact.businessId) return {businessId: String(contact.businessId), method: 'contact_business_id', created: false};
 
   const exactMatches = findExactGhlBusinessesByName_(company.name || '', locationId);
-  if (exactMatches.length === 1) {
-    return {businessId: exactMatches[0].id, method: 'unique_exact_name', created: false};
-  }
-  if (exactMatches.length > 1) {
-    throw new Error('Multiple GHL businesses exactly match Flex company name "' + (company.name || '') + '". Refusing to guess.');
-  }
-
+  if (exactMatches.length === 1) return {businessId: exactMatches[0].id, method: 'unique_exact_name', created: false};
+  if (exactMatches.length > 1) throw new Error('Multiple GHL businesses exactly match Flex company name "' + (company.name || '') + '". Refusing to guess.');
   if (!company.name) throw new Error('Flex company ' + companyUuid + ' has no name. Refusing GHL business creation.');
 
   const createResponse = ghlRequest_('/businesses/', {
     method: 'post',
     apiVersion: 'v3',
-    payload: {
+    payload: compactPayload_({
       name: company.name,
       locationId: String(locationId),
       phone: company.phone || '',
@@ -354,7 +399,7 @@ function resolveGhlBusiness_(company, companyUuid, contact, locationId) {
       state: company.state || '',
       country: company.country || '',
       description: 'Created by Flex Catering Sync. Flex Company UUID: ' + companyUuid
-    }
+    })
   });
   const body = createResponse.body || {};
   const created = body.business || body.buiseness;
