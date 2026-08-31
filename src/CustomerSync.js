@@ -38,6 +38,7 @@ function runLatestFlexCustomerSyncTest_() {
     const customer = customerResponse.body;
     if (!customer || !customer.uuid) throw new Error('Flex customer response is missing uuid.');
     if (!customer.email) throw new Error('Flex customer ' + customer.uuid + ' has no email; refusing to create/upsert a GHL contact without a deterministic email match.');
+    const companyUuid = customer.company_uuid || seedOrder.company_uuid || '';
     run.customersChecked += 1;
 
     const orders = listAllFlexCustomerOrders_(customer.uuid);
@@ -77,7 +78,7 @@ function runLatestFlexCustomerSyncTest_() {
       flexExternalRef: customer.external_reference_id,
       ghlRecordType: 'contact',
       ghlRecordId: ghlContactId,
-      parentFlexCompanyUuid: customer.company_uuid,
+      parentFlexCompanyUuid: companyUuid,
       syncStatus: 'SYNCED',
       notes: 'Controlled latest-customer sync test.'
     });
@@ -93,7 +94,7 @@ function runLatestFlexCustomerSyncTest_() {
       action: action,
       ghlRecordType: 'contact',
       ghlRecordId: ghlContactId,
-      companyUuid: customer.company_uuid,
+      companyUuid: companyUuid,
       status: 'SUCCESS',
       attempt: response.attempt,
       durationMs: response.durationMs,
@@ -102,6 +103,7 @@ function runLatestFlexCustomerSyncTest_() {
         : 'Updated/upserted GHL contact from the latest Flex order customer.',
       context: {
         createdNewGhlContact: response.body && response.body.new === true,
+        companyUuidSource: customer.company_uuid ? 'customer' : (seedOrder.company_uuid ? 'order' : 'none'),
         totalCustomerOrders: orders.length,
         nonCancelledOrderCount: metrics.orderCount,
         lifetimeValue: metrics.lifetimeValue,
@@ -114,7 +116,7 @@ function runLatestFlexCustomerSyncTest_() {
     });
 
     finishRun_(run, 'SUCCESS', 'Controlled latest Flex customer → GHL contact sync test passed.');
-    return {flexCustomerUuid: customer.uuid, ghlContactId: ghlContactId, metrics: metrics};
+    return {flexCustomerUuid: customer.uuid, flexCompanyUuid: companyUuid, ghlContactId: ghlContactId, metrics: metrics};
   } catch (error) {
     logCaughtError_(run, 'LATEST_CUSTOMER_SYNC_TEST', error, {entityType: 'customer'});
     finishRun_(run, 'FAILED', error.message || String(error));
