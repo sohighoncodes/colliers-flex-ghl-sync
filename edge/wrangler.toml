@@ -1,0 +1,4 @@
+name = "colliers-flex-webhook"
+main = "flex-webhook-worker.js"
+compatibility_date = "2026-08-31"
+workers_dev = true
