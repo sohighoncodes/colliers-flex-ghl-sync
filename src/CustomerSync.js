@@ -30,16 +30,24 @@ function runLatestFlexCustomerSyncTest_() {
     const latestOrders = getCollectionItems_(latestOrderResponse.body);
     if (!latestOrders.length) throw new Error('Flex returned no orders for the controlled sync test.');
 
-    const seedOrder = latestOrders[0];
-    if (!seedOrder.customer_uuid) throw new Error('Latest Flex order has no customer_uuid.');
+    const seedOrderSummary = latestOrders[0];
+    if (!seedOrderSummary.customer_uuid) throw new Error('Latest Flex order has no customer_uuid.');
+    if (!seedOrderSummary.uuid) throw new Error('Latest Flex order summary has no uuid.');
+
+    const fullOrderResponse = flexRequest_('/api/v1/orders/' + encodeURIComponent(seedOrderSummary.uuid));
+    const seedOrder = fullOrderResponse.body || seedOrderSummary;
 
     run.ordersChecked += 1;
-    const customerResponse = flexRequest_('/api/v1/customers/' + encodeURIComponent(seedOrder.customer_uuid));
+    const customerResponse = flexRequest_('/api/v1/customers/' + encodeURIComponent(seedOrderSummary.customer_uuid));
     const customer = customerResponse.body;
     if (!customer || !customer.uuid) throw new Error('Flex customer response is missing uuid.');
     if (!customer.email) throw new Error('Flex customer ' + customer.uuid + ' has no email; refusing to create/upsert a GHL contact without a deterministic email match.');
-    const companyUuid = customer.company_uuid || seedOrder.company_uuid || '';
     run.customersChecked += 1;
+
+    const companyUuid = customer.company_uuid || seedOrder.company_uuid || seedOrderSummary.company_uuid || '';
+    const companyUuidSource = customer.company_uuid
+      ? 'customer'
+      : (seedOrder.company_uuid ? 'full_order' : (seedOrderSummary.company_uuid ? 'order_list' : 'none'));
 
     const orders = listAllFlexCustomerOrders_(customer.uuid);
     run.ordersChecked += orders.length;
@@ -103,7 +111,7 @@ function runLatestFlexCustomerSyncTest_() {
         : 'Updated/upserted GHL contact from the latest Flex order customer.',
       context: {
         createdNewGhlContact: response.body && response.body.new === true,
-        companyUuidSource: customer.company_uuid ? 'customer' : (seedOrder.company_uuid ? 'order' : 'none'),
+        companyUuidSource: companyUuidSource,
         totalCustomerOrders: orders.length,
         nonCancelledOrderCount: metrics.orderCount,
         lifetimeValue: metrics.lifetimeValue,
@@ -116,7 +124,7 @@ function runLatestFlexCustomerSyncTest_() {
     });
 
     finishRun_(run, 'SUCCESS', 'Controlled latest Flex customer → GHL contact sync test passed.');
-    return {flexCustomerUuid: customer.uuid, flexCompanyUuid: companyUuid, ghlContactId: ghlContactId, metrics: metrics};
+    return {flexCustomerUuid: customer.uuid, ghlContactId: ghlContactId, companyUuid: companyUuid, metrics: metrics};
   } catch (error) {
     logCaughtError_(run, 'LATEST_CUSTOMER_SYNC_TEST', error, {entityType: 'customer'});
     finishRun_(run, 'FAILED', error.message || String(error));
