@@ -93,3 +93,75 @@ function runFlexOrderSchemaInspection_() {
     lock.releaseLock();
   }
 }
+
+function summarizeCustomFields_(responseBody) {
+  const candidates = []
+    .concat((responseBody && responseBody.customFields) || [])
+    .concat((responseBody && responseBody.fields) || []);
+
+  return candidates
+    .filter(function(field) { return field && !field.folder; })
+    .map(function(field) {
+      return {
+        id: field.id || '',
+        name: field.name || '',
+        fieldKey: field.fieldKey || '',
+        objectKey: field.objectKey || field.model || '',
+        dataType: field.dataType || ''
+      };
+    });
+}
+
+function runGhlFieldMappingInspection_() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) throw new Error('Another sync process is already running.');
+
+  const run = startRun_('MANUAL_GHL_FIELD_INSPECTION');
+  try {
+    const config = getConfig_();
+    const locationId = config.GHL_LOCATION_ID;
+    if (!locationId) throw new Error('GHL_LOCATION_ID is missing from Config.');
+
+    const contactResponse = ghlRequest_(
+      '/locations/' + encodeURIComponent(locationId) + '/customFields?model=contact',
+      {method: 'get', apiVersion: 'v3'}
+    );
+    const contactFields = summarizeCustomFields_(contactResponse.body);
+    logEvent_(run, {
+      entityType: 'contact',
+      eventType: 'FIELD_INSPECTION',
+      action: 'READ_GHL_CONTACT_FIELDS',
+      ghlRecordType: 'custom_field',
+      status: 'SUCCESS',
+      attempt: contactResponse.attempt,
+      durationMs: contactResponse.durationMs,
+      message: 'Captured GHL contact field IDs, names, keys, and data types.',
+      context: {fieldCount: contactFields.length, fields: contactFields}
+    });
+
+    const companyResponse = ghlRequest_(
+      '/custom-fields/object-key/business?locationId=' + encodeURIComponent(locationId),
+      {method: 'get', apiVersion: '2021-07-28'}
+    );
+    const companyFields = summarizeCustomFields_(companyResponse.body);
+    logEvent_(run, {
+      entityType: 'company',
+      eventType: 'FIELD_INSPECTION',
+      action: 'READ_GHL_COMPANY_FIELDS',
+      ghlRecordType: 'custom_field',
+      status: 'SUCCESS',
+      attempt: companyResponse.attempt,
+      durationMs: companyResponse.durationMs,
+      message: 'Captured GHL company field IDs, names, keys, and data types.',
+      context: {fieldCount: companyFields.length, fields: companyFields}
+    });
+
+    finishRun_(run, 'SUCCESS', 'GHL contact and company field inspection passed.');
+  } catch (error) {
+    logCaughtError_(run, 'GHL_FIELD_MAPPING_INSPECTION', error, {entityType: 'system'});
+    finishRun_(run, 'FAILED', error.message || String(error));
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
