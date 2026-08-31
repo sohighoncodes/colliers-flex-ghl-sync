@@ -3,6 +3,7 @@ function onOpen() {
     .createMenu('Flex ↔ GHL Sync')
     .addItem('Run logging self-test', 'runLoggingSelfTest')
     .addItem('Test API connections', 'testApiConnections')
+    .addItem('Inspect Flex order schema', 'inspectFlexOrderSchema')
     .addSeparator()
     .addItem('Run sync now', 'runSyncNow')
     .addItem('Install 5-minute trigger', 'installSyncTrigger')
@@ -20,6 +21,10 @@ function runSyncNow() {
 
 function testApiConnections() {
   runConnectionTests_();
+}
+
+function inspectFlexOrderSchema() {
+  runFlexOrderSchemaInspection_();
 }
 
 function runLoggingSelfTest() {
