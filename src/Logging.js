@@ -101,6 +101,17 @@ function logError_(run, eventId, errorData) {
 }
 
 function logCaughtError_(run, operation, error, context) {
+  const blockedIp = extractFlexBlockedIp_(error);
+  const normalizedMessage = blockedIp
+    ? 'FLEX_IP_NOT_ALLOWLISTED: ' + blockedIp + ' — add this exact IP to the Flex API allowlist.'
+    : (error.message || String(error));
+  const eventContext = Object.assign({}, context || {});
+  if (blockedIp) {
+    eventContext.errorType = 'FLEX_IP_NOT_ALLOWLISTED';
+    eventContext.blockedIp = blockedIp;
+    eventContext.actionRequired = 'Add this exact IP to the Flex API allowlist.';
+  }
+
   const eventId = logEvent_(run, {
     entityType: (context && context.entityType) || 'system',
     flexUuid: context && context.flexUuid,
@@ -109,8 +120,8 @@ function logCaughtError_(run, operation, error, context) {
     action: operation,
     status: 'FAILED',
     attempt: error.attempt || 1,
-    message: error.message || String(error),
-    context: context || {}
+    message: normalizedMessage,
+    context: eventContext
   });
 
   return logError_(run, eventId, {
@@ -121,14 +132,38 @@ function logCaughtError_(run, operation, error, context) {
     httpMethod: error.httpMethod,
     endpoint: error.endpoint,
     httpStatus: error.httpStatus,
-    errorCode: error.errorCode,
-    message: error.message || String(error),
+    errorCode: blockedIp ? 'FLEX_IP_NOT_ALLOWLISTED' : error.errorCode,
+    message: normalizedMessage,
     attempt: error.attempt || 1,
     retryable: error.retryable === true,
     context: {
+      blockedIp: blockedIp || '',
+      actionRequired: blockedIp ? 'Add this exact IP to the Flex API allowlist.' : '',
       request: error.requestContext,
       response: error.responseBody,
       stack: error.stack
     }
   });
+}
+
+function extractFlexBlockedIp_(error) {
+  const candidates = [];
+  if (error) {
+    if (error.message) candidates.push(String(error.message));
+    if (error.responseBody) {
+      if (typeof error.responseBody === 'string') candidates.push(error.responseBody);
+      else {
+        try { candidates.push(JSON.stringify(error.responseBody)); } catch (jsonError) {}
+      }
+    }
+    if (error.stack) candidates.push(String(error.stack));
+  }
+
+  const text = candidates.join(' ');
+  const match = text.match(/IP\s+((?:\d{1,3}\.){3}\d{1,3})\s+is not allowed to access this API/i);
+  if (!match) return '';
+
+  const octets = match[1].split('.').map(function(value) { return Number(value); });
+  if (octets.length !== 4 || octets.some(function(value) { return value < 0 || value > 255 || isNaN(value); })) return '';
+  return match[1];
 }
