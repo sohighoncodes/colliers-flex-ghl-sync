@@ -11,6 +11,11 @@ const FLEX_WEBHOOK_EVENTS = Object.freeze([
   'orders.deleted'
 ]);
 
+const FLEX_COMPANY_WEBHOOK_EVENTS = Object.freeze([
+  'companies.created',
+  'companies.updated'
+]);
+
 function prepareWebhookReceiver_() {
   const props = PropertiesService.getScriptProperties();
   let secret = String(props.getProperty('WEBHOOK_INTERNAL_SECRET') || '');
@@ -46,26 +51,36 @@ function showWebhookSetup_() {
 }
 
 function registerFlexWebhook_() {
+  return registerFlexWebhookSubscription_(FLEX_WEBHOOK_EVENTS, 'flex_subscription_uuid', 'FLEX_WEBHOOK_SECRET', 'customer/order');
+}
+
+function registerFlexCompanyWebhook_() {
+  return registerFlexWebhookSubscription_(FLEX_COMPANY_WEBHOOK_EVENTS, 'flex_company_subscription_uuid', 'FLEX_COMPANY_WEBHOOK_SECRET', 'company');
+}
+
+function registerFlexWebhookSubscription_(events, stateKey, workerSecretName, label) {
   const config = getConfig_();
   const targetUrl = String(config.FLEX_WEBHOOK_TARGET_URL || '').trim();
   if (!targetUrl) {
     throw new Error('Add FLEX_WEBHOOK_TARGET_URL to the Config tab with your deployed Cloudflare Worker URL first.');
   }
 
-  const existingResponse = flexRequest_('/api/v1/webhooks');
+  const existingResponse = flexRequest_('/api/v1/webhooks?per_page=100');
   const existing = getCollectionItems_(existingResponse.body);
   const matching = existing.filter(function(webhook) {
-    return String(webhook.target_url || '').trim() === targetUrl;
+    if (String(webhook.target_url || '').trim() !== targetUrl) return false;
+    const currentEvents = (webhook.events || []).map(String);
+    return events.every(function(eventName) { return currentEvents.indexOf(eventName) >= 0; });
   });
 
   if (matching.length) {
     const current = matching[0];
+    setSyncState_('webhook', stateKey, current.uuid || '', new Date(), 'Flex ' + label + ' webhook subscription already registered.');
     SpreadsheetApp.getUi().alert(
-      'Flex webhook already exists.\n\n' +
+      'Flex ' + label + ' webhook already exists.\n\n' +
       'UUID: ' + (current.uuid || '') + '\n' +
       'Target: ' + targetUrl + '\n' +
-      'Events: ' + ((current.events || []).join(', ')) + '\n\n' +
-      'Secret key: ' + (current.secret_key || '[retrieve webhook details if hidden]')
+      'Events: ' + ((current.events || []).join(', '))
     );
     return current;
   }
@@ -74,31 +89,32 @@ function registerFlexWebhook_() {
     method: 'post',
     payload: {
       target_url: targetUrl,
-      events: FLEX_WEBHOOK_EVENTS.slice()
+      events: events.slice()
     }
   });
   const webhook = response.body || {};
 
   setSyncState_(
     'webhook',
-    'flex_subscription_uuid',
+    stateKey,
     webhook.uuid || '',
     new Date(),
-    'Flex webhook subscription registered for customer/order sync events.'
+    'Flex ' + label + ' webhook subscription registered.'
   );
 
   SpreadsheetApp.getUi().alert(
-    'Flex webhook registered.\n\n' +
+    'Flex ' + label + ' webhook registered.\n\n' +
     'UUID: ' + (webhook.uuid || '') + '\n' +
-    'Target: ' + targetUrl + '\n\n' +
-    'IMPORTANT — copy this Flex secret into the Cloudflare Worker secret FLEX_WEBHOOK_SECRET:\n\n' +
+    'Target: ' + targetUrl + '\n' +
+    'Events: ' + events.join(', ') + '\n\n' +
+    'IMPORTANT — copy this Flex secret into the Cloudflare Worker secret ' + workerSecretName + ':\n\n' +
     (webhook.secret_key || '[secret key not returned]')
   );
   return webhook;
 }
 
 function inspectFlexWebhooks_() {
-  const response = flexRequest_('/api/v1/webhooks');
+  const response = flexRequest_('/api/v1/webhooks?per_page=100');
   const webhooks = getCollectionItems_(response.body);
   const summary = webhooks.map(function(item) {
     return {
