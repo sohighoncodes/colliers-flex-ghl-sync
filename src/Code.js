@@ -17,6 +17,7 @@ function onOpen() {
     .addItem('Show webhook receiver setup', 'showWebhookSetup')
     .addItem('Inspect Flex webhooks', 'inspectFlexWebhooks')
     .addItem('Register Flex webhook', 'registerFlexWebhook')
+    .addItem('Register Flex company webhook', 'registerFlexCompanyWebhook')
     .addToUi();
 }
 
@@ -50,6 +51,10 @@ function inspectFlexWebhooks() {
 
 function registerFlexWebhook() {
   return registerFlexWebhook_();
+}
+
+function registerFlexCompanyWebhook() {
+  return registerFlexCompanyWebhook_();
 }
 
 function testLatestFlexCustomerSync() {
