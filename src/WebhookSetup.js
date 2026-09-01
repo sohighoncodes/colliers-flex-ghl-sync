@@ -8,10 +8,7 @@ const FLEX_WEBHOOK_EVENTS = Object.freeze([
   'orders.approved',
   'orders.invoiced',
   'orders.cancelled',
-  'orders.deleted'
-]);
-
-const FLEX_COMPANY_WEBHOOK_EVENTS = Object.freeze([
+  'orders.deleted',
   'companies.created',
   'companies.updated'
 ]);
@@ -51,14 +48,19 @@ function showWebhookSetup_() {
 }
 
 function registerFlexWebhook_() {
-  return registerFlexWebhookSubscription_(FLEX_WEBHOOK_EVENTS, 'flex_subscription_uuid', 'FLEX_WEBHOOK_SECRET', 'customer/order');
+  return registerFlexWebhookSubscription_();
 }
 
+// Backwards-compatible menu/function name. Flex appears to maintain a single
+// subscription per target URL, so customer/order/company events must be kept on
+// one combined subscription. Registering a second company-only subscription can
+// replace the event list on the existing target and silently stop customer/order
+// deliveries.
 function registerFlexCompanyWebhook_() {
-  return registerFlexWebhookSubscription_(FLEX_COMPANY_WEBHOOK_EVENTS, 'flex_company_subscription_uuid', 'FLEX_COMPANY_WEBHOOK_SECRET', 'company');
+  return registerFlexWebhookSubscription_();
 }
 
-function registerFlexWebhookSubscription_(events, stateKey, workerSecretName, label) {
+function registerFlexWebhookSubscription_() {
   const config = getConfig_();
   const targetUrl = String(config.FLEX_WEBHOOK_TARGET_URL || '').trim();
   if (!targetUrl) {
@@ -70,14 +72,16 @@ function registerFlexWebhookSubscription_(events, stateKey, workerSecretName, la
   const matching = existing.filter(function(webhook) {
     if (String(webhook.target_url || '').trim() !== targetUrl) return false;
     const currentEvents = (webhook.events || []).map(String);
-    return events.every(function(eventName) { return currentEvents.indexOf(eventName) >= 0; });
+    return FLEX_WEBHOOK_EVENTS.every(function(eventName) {
+      return currentEvents.indexOf(eventName) >= 0;
+    });
   });
 
   if (matching.length) {
     const current = matching[0];
-    setSyncState_('webhook', stateKey, current.uuid || '', new Date(), 'Flex ' + label + ' webhook subscription already registered.');
+    recordCombinedWebhookState_(current.uuid || '', 'Flex combined customer/order/company webhook subscription already registered.');
     SpreadsheetApp.getUi().alert(
-      'Flex ' + label + ' webhook already exists.\n\n' +
+      'Flex webhook already exists.\n\n' +
       'UUID: ' + (current.uuid || '') + '\n' +
       'Target: ' + targetUrl + '\n' +
       'Events: ' + ((current.events || []).join(', '))
@@ -89,28 +93,31 @@ function registerFlexWebhookSubscription_(events, stateKey, workerSecretName, la
     method: 'post',
     payload: {
       target_url: targetUrl,
-      events: events.slice()
+      events: FLEX_WEBHOOK_EVENTS.slice()
     }
   });
   const webhook = response.body || {};
 
-  setSyncState_(
-    'webhook',
-    stateKey,
+  recordCombinedWebhookState_(
     webhook.uuid || '',
-    new Date(),
-    'Flex ' + label + ' webhook subscription registered.'
+    'Flex combined customer/order/company webhook subscription registered.'
   );
 
   SpreadsheetApp.getUi().alert(
-    'Flex ' + label + ' webhook registered.\n\n' +
+    'Flex combined webhook registered.\n\n' +
     'UUID: ' + (webhook.uuid || '') + '\n' +
     'Target: ' + targetUrl + '\n' +
-    'Events: ' + events.join(', ') + '\n\n' +
-    'IMPORTANT — copy this Flex secret into the Cloudflare Worker secret ' + workerSecretName + ':\n\n' +
+    'Events: ' + FLEX_WEBHOOK_EVENTS.join(', ') + '\n\n' +
+    'IMPORTANT — copy this Flex secret into BOTH Cloudflare Worker secrets FLEX_WEBHOOK_SECRET and FLEX_COMPANY_WEBHOOK_SECRET (or keep the second unset if the Worker is redeployed to use only FLEX_WEBHOOK_SECRET):\n\n' +
     (webhook.secret_key || '[secret key not returned]')
   );
   return webhook;
+}
+
+function recordCombinedWebhookState_(uuid, note) {
+  const now = new Date();
+  setSyncState_('webhook', 'flex_subscription_uuid', uuid || '', now, note || '');
+  setSyncState_('webhook', 'flex_company_subscription_uuid', uuid || '', now, note || '');
 }
 
 function inspectFlexWebhooks_() {
