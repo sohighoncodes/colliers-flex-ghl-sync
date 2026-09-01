@@ -51,8 +51,8 @@ function doGet(e) {
 function doPost(e) {
   try {
     const props = PropertiesService.getScriptProperties();
-    const expectedToken = String(props.getProperty('WEBHOOK_INTERNAL_SECRET') || '');
-    const suppliedToken = e && e.parameter ? String(e.parameter.token || '') : '';
+    const expectedToken = String(props.getProperty('WEBHOOK_INTERNAL_SECRET') || '').trim();
+    const suppliedToken = e && e.parameter ? String(e.parameter.token || '').trim() : '';
     if (!expectedToken || !suppliedToken || !constantTimeEquals_(expectedToken, suppliedToken)) {
       return jsonOutput_({ok: false, error: 'unauthorized'});
     }
@@ -90,6 +90,12 @@ function doPost(e) {
 
     let run;
     try {
+      // Re-check after acquiring the lock so two simultaneous deliveries of the
+      // same Flex event cannot both pass the first idempotency check.
+      if (isWebhookEventProcessed_(eventId)) {
+        return jsonOutput_({ok: true, duplicate: true, eventId: eventId});
+      }
+
       run = startRun_('FLEX_WEBHOOK:' + eventType);
       const config = getConfig_();
       if (!isSyncEnabled_(config)) {
@@ -117,7 +123,7 @@ function doPost(e) {
 
       const customerUuid = resolveWebhookCustomerUuid_(eventType, item);
       if (!customerUuid) {
-        recordWebhookEvent_(eventId, eventType, item, 'IGNORED', 'Webhook does not contain a customer UUID.');
+        recordWebhookEvent_(eventId, eventType, item, 'IGNORED', 'Webhook does not contain or resolve to a customer UUID.');
         finishRun_(run, 'SKIPPED', 'No customer UUID available for supported webhook event.');
         return jsonOutput_({ok: true, ignored: true, eventId: eventId});
       }
@@ -163,9 +169,25 @@ function isSupportedFlexWebhookEvent_(eventType) {
 }
 
 function resolveWebhookCustomerUuid_(eventType, item) {
-  if (String(eventType).indexOf('customers.') === 0) return String(item.uuid || '');
-  if (String(eventType).indexOf('orders.') === 0) return String(item.customer_uuid || '');
-  return '';
+  const type = String(eventType || '');
+  if (type.indexOf('customers.') === 0) return String(item.uuid || '');
+  if (type.indexOf('orders.') !== 0) return '';
+
+  if (item && item.customer_uuid) return String(item.customer_uuid);
+
+  // Flex order webhook payloads are not perfectly consistent. For non-delete
+  // events, resolve the customer from the authoritative full order record.
+  // A deleted order may no longer be retrievable, so only use the payload there.
+  if (type === 'orders.deleted') return '';
+  const orderUuid = item && item.uuid ? String(item.uuid) : '';
+  if (!orderUuid) return '';
+
+  const orderResponse = flexRequest_('/api/v1/orders/' + encodeURIComponent(orderUuid), {
+    method: 'get',
+    maxAttempts: 2
+  });
+  const order = orderResponse && orderResponse.body ? orderResponse.body : {};
+  return String(order.customer_uuid || '');
 }
 
 function ensureWebhookEventsSheet_() {
