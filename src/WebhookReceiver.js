@@ -49,7 +49,6 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  const response = {ok: false};
   try {
     const props = PropertiesService.getScriptProperties();
     const expectedToken = String(props.getProperty('WEBHOOK_INTERNAL_SECRET') || '');
@@ -102,6 +101,20 @@ function doPost(e) {
       const locationId = String(config.GHL_LOCATION_ID || '');
       if (!locationId) throw new Error('GHL_LOCATION_ID is missing from Config.');
 
+      if (eventType.indexOf('companies.') === 0) {
+        const companyUuid = String(item.uuid || '');
+        if (!companyUuid) {
+          recordWebhookEvent_(eventId, eventType, item, 'IGNORED', 'Webhook does not contain a company UUID.');
+          finishRun_(run, 'SKIPPED', 'No company UUID available for company webhook event.');
+          return jsonOutput_({ok: true, ignored: true, eventId: eventId});
+        }
+
+        syncFlexCompanyWebhookToGhl_(run, companyUuid, locationId);
+        markWebhookEventProcessed_(eventId, eventType, item, 'SUCCESS', 'Processed by company webhook sync.');
+        finishRun_(run, 'SUCCESS', 'Processed Flex webhook ' + eventType + ' event ' + eventId + '.');
+        return jsonOutput_({ok: true, eventId: eventId, companyUuid: companyUuid});
+      }
+
       const customerUuid = resolveWebhookCustomerUuid_(eventType, item);
       if (!customerUuid) {
         recordWebhookEvent_(eventId, eventType, item, 'IGNORED', 'Webhook does not contain a customer UUID.');
@@ -143,7 +156,9 @@ function isSupportedFlexWebhookEvent_(eventType) {
     'orders.approved',
     'orders.invoiced',
     'orders.cancelled',
-    'orders.deleted'
+    'orders.deleted',
+    'companies.created',
+    'companies.updated'
   ].indexOf(String(eventType || '')) >= 0;
 }
 
