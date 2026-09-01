@@ -10,9 +10,18 @@ export default {
 
     const rawBody = await request.text();
     const receivedCode = request.headers.get('x-webhook-code') || '';
-    const expectedCode = await sha1Hex(env.FLEX_WEBHOOK_SECRET + rawBody);
+    const secrets = [env.FLEX_WEBHOOK_SECRET, env.FLEX_COMPANY_WEBHOOK_SECRET].filter(Boolean);
 
-    if (!timingSafeEqual(receivedCode.toLowerCase(), expectedCode.toLowerCase())) {
+    let signatureValid = false;
+    for (const secret of secrets) {
+      const expectedCode = await sha1Hex(secret + rawBody);
+      if (timingSafeEqual(receivedCode.toLowerCase(), expectedCode.toLowerCase())) {
+        signatureValid = true;
+        break;
+      }
+    }
+
+    if (!signatureValid) {
       return json({ok: false, error: 'invalid_signature'}, 401);
     }
 
