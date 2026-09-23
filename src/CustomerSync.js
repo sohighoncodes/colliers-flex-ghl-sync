@@ -267,20 +267,22 @@ function toDeliveryDateOnly_(value) {
   return Utilities.formatDate(date, 'Australia/Sydney', 'yyyy-MM-dd');
 }
 
-function aggregateDeliveredOrderDates_(orders, asOfMs) {
-  const nowMs = asOfMs === undefined ? Date.now() : asOfMs;
+function isApprovedPaidOrder_(order) {
+  return !!order && String(order.status || '').toLowerCase().trim() === 'approved' &&
+    String(order.payment_status || '').toLowerCase().trim() === 'paid';
+}
+
+function aggregateDeliveredOrderDates_(orders) {
   let first = null;
   let latest = null;
   (orders || []).forEach(function(order) {
-    if (!order) return;
-    // Flex documents completed and invoiced as completed order states.
-    // A scheduled date by itself is not evidence of a fulfilled order.
-    const status = String(order.status || '').toLowerCase().trim();
-    if (status !== 'completed' && status !== 'invoiced') return;
+    // Colliers' agreed rule: approved AND paid, not proof of fulfillment.
+    // Scheduled future dates qualify too; no elapsed-time condition.
+    if (!isApprovedPaidOrder_(order)) return;
     const value = order.delivery_datetime;
     if (typeof value !== 'string' || !value.trim()) return;
     const timestamp = new Date(value).getTime();
-    if (isNaN(timestamp) || timestamp > nowMs) return;
+    if (isNaN(timestamp)) return;
     if (first === null || timestamp < first.timestamp) first = {timestamp: timestamp, value: value};
     if (latest === null || timestamp > latest.timestamp) latest = {timestamp: timestamp, value: value};
   });
@@ -291,13 +293,20 @@ function aggregateDeliveredOrderDates_(orders, asOfMs) {
 }
 
 function summarizeDeliveryOrderEvidence_(orders) {
-  const evidence = {statusCounts: {}, ordersWithDeliveryDate: 0, completedOrInvoicedOrders: 0};
+  const evidence = {statusCounts: {}, paymentStatusCounts: {}, ordersWithDeliveryDate: 0,
+    completedOrInvoicedOrders: 0, approvedPaidOrders: 0, eligibleDeliveryOrders: 0};
   (orders || []).forEach(function(order) {
     if (!order) return;
     const status = String(order.status || 'missing').toLowerCase().trim();
     evidence.statusCounts[status] = (evidence.statusCounts[status] || 0) + 1;
+    const paymentStatus = String(order.payment_status || 'missing').toLowerCase().trim();
+    evidence.paymentStatusCounts[paymentStatus] = (evidence.paymentStatusCounts[paymentStatus] || 0) + 1;
     if (toDeliveryDateOnly_(order.delivery_datetime)) evidence.ordersWithDeliveryDate += 1;
     if (status === 'completed' || status === 'invoiced') evidence.completedOrInvoicedOrders += 1;
+    if (isApprovedPaidOrder_(order)) {
+      evidence.approvedPaidOrders += 1;
+      if (toDeliveryDateOnly_(order.delivery_datetime)) evidence.eligibleDeliveryOrders += 1;
+    }
   });
   return evidence;
 }
