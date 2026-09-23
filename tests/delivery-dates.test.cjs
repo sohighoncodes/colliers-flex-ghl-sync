@@ -123,6 +123,14 @@ test('aggregation does not mutate the input order list', () => {
   assert.deepEqual(fixture, orders);
 });
 
+test('audit evidence distinguishes missing dates from ineligible statuses without customer data', () => {
+  const result = context().summarizeDeliveryOrderEvidence_(orders);
+  assert.deepEqual(plain(result), {
+    statusCounts: {completed: 1, invoiced: 1, cancelled: 1},
+    ordersWithDeliveryDate: 3, completedOrInvoicedOrders: 2
+  });
+});
+
 test('both mapped updates and contact upserts carry the new fields', () => {
   const ctx = context();
   vm.runInContext(fs.readFileSync(path.join(root, 'src/ProductionSync.js'), 'utf8'), ctx);

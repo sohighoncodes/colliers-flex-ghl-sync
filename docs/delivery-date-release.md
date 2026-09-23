@@ -17,7 +17,7 @@ The shared contact payload builder handles both webhook and scheduled syncs. Exi
 
 ## Deployment
 
-The updated source was verified against Apps Script readback and saved as immutable **version 10**. The existing webhook deployment `AKfycbz8f1M74Vht5Ys4zuP_e7wW-dF70557Hcv1_5dYL5cpW_KjpROGWHmLMM9xmeuJkatSDA` now targets version 10; its URL and Cloudflare settings are unchanged. HEAD contains the same version-10 source for scheduled triggers. The unauthenticated endpoint still returns `unauthorized` as expected.
+The release is immutable **version 11**, adding source-status audit counts to version 10. The existing webhook deployment `AKfycbz8f1M74Vht5Ys4zuP_e7wW-dF70557Hcv1_5dYL5cpW_KjpROGWHmLMM9xmeuJkatSDA` now targets version 11; its URL and Cloudflare settings are unchanged. HEAD contains the same source for scheduled triggers. The unauthenticated endpoint still returns `unauthorized` as expected.
 
 ## Recovery
 
@@ -35,6 +35,8 @@ Emergency feature-only switch: in Apps Script Project Settings → Script Proper
 
 ## Verification
 
-`npm test` passes 11 checks covering delivery chronology, completed/invoiced status eligibility, future-date exclusion, cancellation recalculation, missing/invalid dates, Sydney day boundaries and daylight saving, explicit blank values, the emergency switch, mapped-contact/upsert payloads, and full legacy metric/payload equality against the saved baseline. It also parses all Apps Script JavaScript together and checks the original web-app access settings.
+`npm test` passes 12 checks covering delivery chronology, completed/invoiced status eligibility, future-date exclusion, cancellation recalculation, missing/invalid dates, Sydney day boundaries and daylight saving, explicit blank values, the emergency switch, source audit counts, mapped-contact/upsert payloads, and full legacy metric/payload equality against the saved baseline. It also parses all Apps Script JavaScript together and checks the original web-app access settings.
+
+Live version-10 verification: a natural `orders.updated` webhook synchronized a contact successfully. A scheduled canary synchronized existing Flex customer 2414, read 316 orders, and completed without failures on 2026-09-23 at 14:45 (Manila). Its legacy first/last order-date values were unchanged. New delivery fields were blank because no qualifying dates were found; audit counts were added in version 11 to make the reason visible in future Sync Events context.
 
 The HEAD manifest did not contain `webapp` settings, while the working version-7 manifest did. This release explicitly carries forward its `USER_DEPLOYING` / `ANYONE_ANONYMOUS` settings so the existing Cloudflare webhook can continue to reach the same deployment URL. Its existing secret validation remains unchanged.

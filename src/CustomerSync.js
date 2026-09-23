@@ -290,6 +290,18 @@ function aggregateDeliveredOrderDates_(orders, asOfMs) {
   };
 }
 
+function summarizeDeliveryOrderEvidence_(orders) {
+  const evidence = {statusCounts: {}, ordersWithDeliveryDate: 0, completedOrInvoicedOrders: 0};
+  (orders || []).forEach(function(order) {
+    if (!order) return;
+    const status = String(order.status || 'missing').toLowerCase().trim();
+    evidence.statusCounts[status] = (evidence.statusCounts[status] || 0) + 1;
+    if (toDeliveryDateOnly_(order.delivery_datetime)) evidence.ordersWithDeliveryDate += 1;
+    if (status === 'completed' || status === 'invoiced') evidence.completedOrInvoicedOrders += 1;
+  });
+  return evidence;
+}
+
 function daysSince_(value) {
   const date = new Date(value);
   if (isNaN(date.getTime())) return '';
