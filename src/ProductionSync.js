@@ -234,6 +234,9 @@ function syncFlexCustomerToGhl_(run, customerUuid, locationId) {
       firstOrderDate: metrics.firstOrderDate,
       lastOrderDate: metrics.lastOrderDate,
       latestOrderUuid: metrics.latestOrderUuid,
+      firstOrderDeliveryDate: metrics.firstOrderDeliveryDate,
+      latestOrderDeliveryDate: metrics.latestOrderDeliveryDate,
+      deliveryDateEvidence: summarizeDeliveryOrderEvidence_(orders),
       latestOrderStatus: metrics.latestOrderStatus
     }
   });

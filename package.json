@@ -4,6 +4,7 @@
   "private": true,
   "description": "Flex API to GoHighLevel sync running in Google Apps Script",
   "scripts": {
+    "test": "node --test tests/*.test.cjs",
     "clasp:login": "clasp login",
     "clasp:pull": "clasp pull",
     "clasp:push": "clasp push",
