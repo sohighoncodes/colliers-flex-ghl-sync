@@ -7,6 +7,8 @@ const GHL_CONTACT_FIELD_IDS = Object.freeze({
   firstOrderDate: '6DbWOP7w8JdpPlh2bZMW',
   lastOrderDate: 'U58XvqZbP5sY6OFnKBLB',
   flexLatestOrderDate: '5hiylYnpqgYcxFNLjhq3',
+  flexFirstOrderDeliveryDate: 'QfxWfMkUxc51TxV4HRC0',
+  flexLatestOrderDeliveryDate: 'DhfdByYXNVysv9ZokInp',
   daysSinceLastOrder: 'ZfdhDRJhdob1a0mRdeNo',
   flexLatestOrderId: 'hKJXtE9UBiVAY1rV94DS',
   flexLatestOrderUuid: 'sQVec8kZPJvQbJMpNCOs',
@@ -169,12 +171,15 @@ function aggregateCustomerOrders_(orders) {
     const value = Number(order.grand_total || 0);
     return total + (isNaN(value) ? 0 : value);
   }, 0);
+  const deliveryMetrics = aggregateDeliveredOrderDates_(orders);
 
   return {
     lifetimeValue: Math.round(lifetimeValue * 100) / 100,
     orderCount: eligible.length,
     firstOrderDate: first ? toDateOnly_(first.created_at) : '',
     lastOrderDate: latest ? toDateOnly_(latest.created_at) : '',
+    firstOrderDeliveryDate: deliveryMetrics.firstOrderDeliveryDate,
+    latestOrderDeliveryDate: deliveryMetrics.latestOrderDeliveryDate,
     daysSinceLastOrder: latest ? daysSince_(latest.created_at) : '',
     latestOrderId: latest ? (latest.order_id || latest.id || '') : '',
     latestOrderUuid: latest ? (latest.uuid || '') : '',
@@ -203,6 +208,17 @@ function buildGhlContactPayload_(customer, metrics, locationId) {
     ghlField_(GHL_CONTACT_FIELD_IDS.flexLookupMethod, 'Flex customer UUID / email upsert'),
     ghlField_(GHL_CONTACT_FIELD_IDS.flexLastLookupAt, nowIso_())
   ].filter(function(field) { return field !== null; });
+
+  // Emergency switch affects only these two additive fields, on both the
+  // versioned webhook and HEAD-based scheduled sync. Missing means enabled.
+  const deliveryDatesEnabled = String(PropertiesService.getScriptProperties()
+    .getProperty('FLEX_DELIVERY_DATE_SYNC_ENABLED') || '').toLowerCase().trim() !== 'false';
+  if (deliveryDatesEnabled) {
+    // Explicit blanks clear stale dates after cancellations/deletions or when
+    // the history no longer has a qualifying delivery. Never fall back to created_at.
+    customFields.push({id: GHL_CONTACT_FIELD_IDS.flexFirstOrderDeliveryDate, fieldValue: metrics.firstOrderDeliveryDate || ''});
+    customFields.push({id: GHL_CONTACT_FIELD_IDS.flexLatestOrderDeliveryDate, fieldValue: metrics.latestOrderDeliveryDate || ''});
+  }
 
   return {
     locationId: String(locationId),
@@ -240,6 +256,38 @@ function toDateOnly_(value) {
   const date = new Date(value);
   if (isNaN(date.getTime())) return '';
   return Utilities.formatDate(date, 'UTC', 'yyyy-MM-dd');
+}
+
+function toDeliveryDateOnly_(value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return '';
+  // Colliers Catering's GHL location timezone; includes daylight saving.
+  // Keep legacy toDateOnly_ (UTC) unchanged for all existing fields.
+  return Utilities.formatDate(date, 'Australia/Sydney', 'yyyy-MM-dd');
+}
+
+function aggregateDeliveredOrderDates_(orders, asOfMs) {
+  const nowMs = asOfMs === undefined ? Date.now() : asOfMs;
+  let first = null;
+  let latest = null;
+  (orders || []).forEach(function(order) {
+    if (!order) return;
+    // Flex documents completed and invoiced as completed order states.
+    // A scheduled date by itself is not evidence of a fulfilled order.
+    const status = String(order.status || '').toLowerCase().trim();
+    if (status !== 'completed' && status !== 'invoiced') return;
+    const value = order.delivery_datetime;
+    if (typeof value !== 'string' || !value.trim()) return;
+    const timestamp = new Date(value).getTime();
+    if (isNaN(timestamp) || timestamp > nowMs) return;
+    if (first === null || timestamp < first.timestamp) first = {timestamp: timestamp, value: value};
+    if (latest === null || timestamp > latest.timestamp) latest = {timestamp: timestamp, value: value};
+  });
+  return {
+    firstOrderDeliveryDate: first ? toDeliveryDateOnly_(first.value) : '',
+    latestOrderDeliveryDate: latest ? toDeliveryDateOnly_(latest.value) : ''
+  };
 }
 
 function daysSince_(value) {
