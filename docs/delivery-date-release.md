@@ -13,7 +13,11 @@ Select the earliest and latest valid `delivery_datetime` across the returned cus
 
 Missing/invalid delivery dates and histories with no qualifying deliveries send blanks to remove stale values in these two fields. Do not substitute the placement date. Existing UTC placement-date calculations, totals, their existing status filtering, company metrics, contact matching, retries, webhooks and reconciliation are preserved.
 
-The shared contact payload builder handles both webhook and scheduled syncs. Existing contacts acquire the fields when next synchronized; this release does not run a full historical backfill or reset cursors.
+The shared contact payload builder handles both webhook and scheduled syncs. Existing contacts acquire the fields when next synchronized. Every refresh reads the paginated customer order history, so the first date is the earliest qualifying delivery returned by Flex, even when it predates this deployment. Records absent from Flex cannot be reconstructed.
+
+## Deployment
+
+The updated source was verified against Apps Script readback and saved as immutable **version 10**. The existing webhook deployment `AKfycbz8f1M74Vht5Ys4zuP_e7wW-dF70557Hcv1_5dYL5cpW_KjpROGWHmLMM9xmeuJkatSDA` now targets version 10; its URL and Cloudflare settings are unchanged. HEAD contains the same version-10 source for scheduled triggers. The unauthenticated endpoint still returns `unauthorized` as expected.
 
 ## Recovery
 
@@ -31,6 +35,6 @@ Emergency feature-only switch: in Apps Script Project Settings → Script Proper
 
 ## Verification
 
-`npm test` checks the new mapping, non-cancelled order selection, missing/invalid dates, Sydney day boundaries and daylight saving, explicit blank values, the emergency switch, mapped-contact/upsert payloads, and full legacy metric/payload equality against the saved baseline. It also parses all Apps Script JavaScript together and checks the original web-app access settings.
+`npm test` passes 11 checks covering delivery chronology, completed/invoiced status eligibility, future-date exclusion, cancellation recalculation, missing/invalid dates, Sydney day boundaries and daylight saving, explicit blank values, the emergency switch, mapped-contact/upsert payloads, and full legacy metric/payload equality against the saved baseline. It also parses all Apps Script JavaScript together and checks the original web-app access settings.
 
 The HEAD manifest did not contain `webapp` settings, while the working version-7 manifest did. This release explicitly carries forward its `USER_DEPLOYING` / `ANYONE_ANONYMOUS` settings so the existing Cloudflare webhook can continue to reach the same deployment URL. Its existing secret validation remains unchanged.
