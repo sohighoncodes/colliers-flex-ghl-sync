@@ -9,7 +9,7 @@ Both fields are DATE fields on GHL contacts in Colliers Catering (`disULVGEDcwvA
 | Flex First Order Delivery Date | `contact.flex_first_order_delivery_date` | `QfxWfMkUxc51TxV4HRC0` |
 | Flex Latest Order Delivery Date | `contact.flex_latest_order_delivery_date` | `DhfdByYXNVysv9ZokInp` |
 
-Select the earliest and latest valid `delivery_datetime` across the returned customer order history, independently of placement chronology. Only completed/invoiced orders with a delivery timestamp at or before the sync time qualify. Flex documents those states as completed; cancelled, not-converted, pending, new, approved, ready, unknown and future deliveries do not qualify. Format the date in `Australia/Sydney` (the verified GHL location timezone), including daylight saving. The timestamp is Flex's assigned delivery/pickup timestamp, not independently verified proof of delivery; this relies on Colliers maintaining completed/invoiced statuses accurately.
+Select the earliest and latest valid `delivery_datetime` across the returned customer order history, independently of placement chronology. The user-approved revised rule is **order `status = approved` AND `payment_status = paid`** (case/whitespace normalized). Both conditions are required. All other order/payment states, including completed/invoiced, unpaid, partially paid, processing and refunded, are excluded. **Future scheduled delivery dates qualify**: there is no elapsed-time condition. These fields represent scheduled delivery dates of approved, fully paid orders, not proof of fulfillment. Format the date in `Australia/Sydney` (the verified GHL location timezone), including daylight saving.
 
 Missing/invalid delivery dates and histories with no qualifying deliveries send blanks to remove stale values in these two fields. Do not substitute the placement date. Existing UTC placement-date calculations, totals, their existing status filtering, company metrics, contact matching, retries, webhooks and reconciliation are preserved.
 
@@ -17,9 +17,17 @@ The shared contact payload builder handles both webhook and scheduled syncs. Exi
 
 ## Deployment
 
-The release is immutable **version 11**, adding source-status audit counts to version 10. The existing webhook deployment `AKfycbz8f1M74Vht5Ys4zuP_e7wW-dF70557Hcv1_5dYL5cpW_KjpROGWHmLMM9xmeuJkatSDA` now targets version 11; its URL and Cloudflare settings are unchanged. HEAD contains the same source for scheduled triggers. The unauthenticated endpoint still returns `unauthorized` as expected.
+The approved/paid release is immutable **version 12**. Both live HEAD and version 12 were verified identical to local source (18 files), and the existing webhook deployment now targets version 12. The preceding release is immutable **version 11**; before this revision, live HEAD and webhook version 11 were verified identical to the saved Git baseline. This revision changes only delivery eligibility and diagnostic counts; webhook URL, Cloudflare settings, manifest, credentials, triggers and reconciliation behavior stay unchanged. Payment/status edits are picked up by the existing changed-order reconciliation; no date-passage recheck is needed because future delivery dates qualify.
 
 ## Recovery
+
+To revert only the approved/paid rule to the previous completed/invoiced rule, restoring both HEAD and the webhook to immutable version 11:
+
+```powershell
+.\scripts\rollback-delivery-dates.ps1 -ToPreviousRule -Apply
+```
+
+Git baseline tag: `rollback/pre-approved-paid-delivery-dates-2026-09-23`. The command below still performs the original full rollback.
 
 Before any source update, live HEAD was saved as immutable Apps Script **version 8**. The original webhook deployment uses **version 7**; HEAD and version 7 already differ, so both must be restored for a complete rollback. The local Git tag is `rollback/pre-delivery-dates-2026-09-23` (baseline commit `78598dac390007fb3424251d52ea9a4352fd8eb0`).
 
@@ -35,10 +43,14 @@ Emergency feature-only switch: in Apps Script Project Settings → Script Proper
 
 ## Verification
 
-`npm test` passes 12 checks covering delivery chronology, completed/invoiced status eligibility, future-date exclusion, cancellation recalculation, missing/invalid dates, Sydney day boundaries and daylight saving, explicit blank values, the emergency switch, source audit counts, mapped-contact/upsert payloads, and full legacy metric/payload equality against the saved baseline. It also parses all Apps Script JavaScript together and checks the original web-app access settings.
+`npm test` passes 13 checks covering delivery chronology, approved-and-paid eligibility, future-date inclusion, cancellation/refund recalculation, missing/invalid dates, Sydney day boundaries and daylight saving, explicit blank values, the emergency switch, source audit counts, mapped-contact/upsert payloads, and full legacy metric/payload equality against the saved baseline. It also parses all Apps Script JavaScript together and checks the original web-app access settings.
+
+Read-only live-data checks for version 12: order 2849 qualifies with delivery date `2026-07-22`. Customer 2414 has 304 approved/paid orders out of 316, with expected first/latest delivery dates `2025-01-23` / `2026-09-10`. Customer 3111 has one approved but unpaid order (3364), so both delivery dates should stay blank.
+
+Live version-12 scheduled verification at 16:29:58–16:31:18 (UTC+8): two mapped contacts synchronized successfully, 317 orders checked, zero failures. GHL readback confirmed customer 2414's dates exactly match the expected values, while customer 3111's dates remain blank after a fresh sync. Run ID: `run-63b5da92-2951-42c6-be90-23916163a2a0`. The unauthenticated webhook still returns `unauthorized`. The remaining 97 mapped customers were queued in the existing reconciliation queue for batched historical recalculation; this is queued work, not a claim that the full backfill has finished. No new contact mappings were requested. Historical orders outside these mapped customers require their own normal sync/matching step. Source cursors are held during the queue so intervening changes can be picked up afterward.
 
 Live version-10 verification: a natural `orders.updated` webhook synchronized a contact successfully. A scheduled canary synchronized existing Flex customer 2414, read 316 orders, and completed without failures on 2026-09-23 at 14:45 (Manila). Its legacy first/last order-date values were unchanged. New delivery fields were blank because no qualifying dates were found; audit counts were added in version 11 to make the reason visible in future Sync Events context.
 
-Live version-11 verification at 14:50 (Manila): two contacts and one linked company synchronized successfully, with zero errors. Customer 2414's 316 orders all contained delivery timestamps, but statuses were 310 approved, 5 cancelled, 1 new. Customer 2874's three orders all contained delivery timestamps and were approved. Neither history had a completed/invoiced order; both new fields therefore remained blank. This is source eligibility, not a missing delivery field or API write failure. Broader backfill is pending resolution of this observed status mismatch.
+Historical version-11 verification at 14:50 (Manila): two contacts and one linked company synchronized successfully, with zero errors. Customer 2414's 316 orders all contained delivery timestamps, but statuses were 310 approved, 5 cancelled, 1 new. Customer 2874's three orders all contained delivery timestamps and were approved. Neither history had a completed/invoiced order; both new fields therefore remained blank. The user subsequently confirmed that fulfillment statuses are not maintained and selected approved AND paid as the replacement rule.
 
 The HEAD manifest did not contain `webapp` settings, while the working version-7 manifest did. This release explicitly carries forward its `USER_DEPLOYING` / `ANYONE_ANONYMOUS` settings so the existing Cloudflare webhook can continue to reach the same deployment URL. Its existing secret validation remains unchanged.

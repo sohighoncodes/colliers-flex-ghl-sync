@@ -21,8 +21,8 @@ function context(code = source, enabled) {
   return ctx;
 }
 const orders = [
-  {uuid: 'latest', order_id: 3, created_at: '2026-09-20T00:00:00Z', delivery_datetime: '2026-09-21T22:30:00Z', status: 'completed', grand_total: 12.35},
-  {uuid: 'first', order_id: 1, created_at: '2026-09-01T00:00:00Z', delivery_datetime: '2026-09-22T22:30:00Z', status: 'invoiced', grand_total: 17.65},
+  {uuid: 'latest', order_id: 3, created_at: '2026-09-20T00:00:00Z', delivery_datetime: '2026-09-21T22:30:00Z', status: 'approved', payment_status: 'paid', grand_total: 12.35},
+  {uuid: 'first', order_id: 1, created_at: '2026-09-01T00:00:00Z', delivery_datetime: '2026-09-22T22:30:00Z', status: 'approved', payment_status: 'paid', grand_total: 17.65},
   {uuid: 'cancelled', order_id: 4, created_at: '2026-09-22T00:00:00Z', delivery_datetime: '2027-01-01T00:00:00Z', status: 'CANCELLED', grand_total: 999}
 ];
 const customer = {uuid: 'customer', id: 42, email: 'fixture@example.invalid', first_name: 'Fixture'};
@@ -36,17 +36,36 @@ test('delivery dates use delivery chronology independently of placement chronolo
   assert.equal(metrics.lifetimeValue, 30);
 });
 
-test('cancelled, unconverted, pending, ready, approved and future deliveries do not count', () => {
+test('only approved AND fully paid orders qualify; scheduled future dates qualify', () => {
   const ctx = context();
-  const asOf = Date.parse('2026-09-23T10:00:00Z');
-  const fixture = ['cancelled', 'not_converted', 'pending', 'new', 'ready', 'approved', 'unknown']
-    .map(status => ({status, delivery_datetime: '2025-01-01T00:00:00Z'}));
-  fixture.push({status: 'invoiced', delivery_datetime: '2026-09-23T10:00:01Z'});
-  fixture.push({status: 'completed', delivery_datetime: 'invalid'});
-  fixture.push({status: 'COMPLETED', delivery_datetime: '2026-09-22T00:00:00Z'});
-  fixture.push({status: ' invoiced ', delivery_datetime: '2026-09-21T00:00:00Z'});
-  assert.deepEqual(plain(ctx.aggregateDeliveredOrderDates_(fixture, asOf)), {
-    firstOrderDeliveryDate: '2026-09-21', latestOrderDeliveryDate: '2026-09-22'
+  const empty = {firstOrderDeliveryDate: '', latestOrderDeliveryDate: ''};
+  for (const status of ['cancelled', 'not_converted', 'pending', 'new', 'ready', 'completed', 'invoiced', 'unknown', undefined]) {
+    assert.deepEqual(plain(ctx.aggregateDeliveredOrderDates_([{status, payment_status: 'paid', delivery_datetime: '2025-01-01T00:00:00Z'}])), empty);
+  }
+  for (const payment_status of ['unpaid', 'partially_paid', 'partially_refunded', 'refunded', 'processing', 'completed', 'unknown', undefined]) {
+    assert.deepEqual(plain(ctx.aggregateDeliveredOrderDates_([{status: 'approved', payment_status, delivery_datetime: '2025-01-01T00:00:00Z'}])), empty);
+  }
+  const fixture = [
+    {status: ' APPROVED ', payment_status: ' PAID ', delivery_datetime: '2026-09-21T00:00:00Z'},
+    {status: 'approved', payment_status: 'paid', delivery_datetime: '2099-01-01T00:00:00Z'},
+    {status: 'approved', payment_status: 'paid', delivery_datetime: 'invalid'},
+    {status: 'approved', payment_status: 'paid'}, null
+  ];
+  assert.deepEqual(plain(ctx.aggregateDeliveredOrderDates_(fixture)), {
+    firstOrderDeliveryDate: '2026-09-21', latestOrderDeliveryDate: '2099-01-01'
+  });
+});
+
+test('refunding a qualifying order recomputes dates and clears an empty history', () => {
+  const ctx = context();
+  const fixture = plain(orders);
+  fixture[1].payment_status = 'refunded';
+  assert.deepEqual(plain(ctx.aggregateDeliveredOrderDates_(fixture)), {
+    firstOrderDeliveryDate: '2026-09-22', latestOrderDeliveryDate: '2026-09-22'
+  });
+  fixture[0].payment_status = 'partially_refunded';
+  assert.deepEqual(plain(ctx.aggregateDeliveredOrderDates_(fixture)), {
+    firstOrderDeliveryDate: '', latestOrderDeliveryDate: ''
   });
 });
 
@@ -54,7 +73,7 @@ test('cancelling a formerly earliest/latest delivery recomputes the remaining hi
   const ctx = context();
   const fixture = plain(orders);
   fixture[1].status = 'cancelled';
-  const result = ctx.aggregateDeliveredOrderDates_(fixture, Date.parse('2026-09-24T00:00:00Z'));
+  const result = ctx.aggregateDeliveredOrderDates_(fixture);
   assert.equal(result.firstOrderDeliveryDate, '2026-09-22');
   assert.equal(result.latestOrderDeliveryDate, '2026-09-22');
 });
@@ -126,8 +145,8 @@ test('aggregation does not mutate the input order list', () => {
 test('audit evidence distinguishes missing dates from ineligible statuses without customer data', () => {
   const result = context().summarizeDeliveryOrderEvidence_(orders);
   assert.deepEqual(plain(result), {
-    statusCounts: {completed: 1, invoiced: 1, cancelled: 1},
-    ordersWithDeliveryDate: 3, completedOrInvoicedOrders: 2
+    statusCounts: {approved: 2, cancelled: 1}, paymentStatusCounts: {paid: 2, missing: 1},
+    ordersWithDeliveryDate: 3, completedOrInvoicedOrders: 0, approvedPaidOrders: 2, eligibleDeliveryOrders: 2
   });
 });
 
